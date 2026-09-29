@@ -30,37 +30,35 @@ bot = commands.Bot(
 )
 
 
-async def sync_commands() -> None:
-    """Pousse les commandes slash sur le serveur.
+async def sync_commands() -> list:
+    """Pousse les commandes slash sur Discord.
 
-    Le sync est cible sur le guild : il est immediat et supprime vraiment
-    les commandes qui n'existent plus dans le code. Un sync global peut
-    mettre jusqu'a une heure a se propager.
+    Sync GLOBAL et non par guild : les commandes declarees dans les cogs
+    sont enregistrees comme globales. Sur cette version de discord.py le
+    `tree.sync(guild=...)` ne lit que `tree._guild_commands[guild.id]`, donc
+    il partirait avec un payload VIDE et `bulk_upsert_guild_commands` ecraserait
+    toutes les commandes du serveur sans rien inscrire.
+
+    Le desavantage du sync global est le temps de propagation (jusqu'a 1h
+    selon Discord), mais c'est le seul qui inscrive reellement les commandes.
     """
     local = bot.tree.get_commands()
-    guild = bot.get_guild(config.GUILD_ID) if config.GUILD_ID else None
-
-    log.info("Sync: %d commande(s) en local, %d cog(s) [%s]",
+    log.info("Sync global : %d commande(s) en local, %d cog(s) [%s]",
              len(local), len(bot.cogs), ", ".join(bot.cogs) or "aucun")
-    log.info("Env: python %s / discord.py %s / guild %s",
-             sys.version.split()[0], discord.__version__,
-             guild.name if guild else "INTROUVABLE")
 
     if not local:
         log.error("Aucune commande enregistree, sync ignore")
-        return
+        return []
 
     try:
-        if guild:
-            synced = await bot.tree.sync(guild=guild)
-            log.info("Commandes synchronisees sur '%s' : %d / %d",
-                     guild.name, len(synced), len(local))
-        else:
-            synced = await bot.tree.sync()
-            log.info("Commandes synchronisees globalement : %d / %d",
-                     len(synced), len(local))
+        synced = await bot.tree.sync()
     except discord.HTTPException:
         log.exception("Echec de la synchronisation des commandes")
+        return []
+
+    log.info("Commandes synchronisees : %d / %d (propagation jusqu'a 1h)",
+             len(synced), len(local))
+    return synced
 
 
 @bot.event

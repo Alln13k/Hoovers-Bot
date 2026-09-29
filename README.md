@@ -122,12 +122,21 @@ Toutes les actions sont écrites dans `audit_log` **et** postées dans
 
 ## Sync des commandes
 
-Les commandes slash sont **automatiquement resynchronisées au démarrage**, au
-moment du `on_ready`. Le sync cible le serveur (`GUILD_ID`) : il est immédiat
-et supprime réellement les commandes qui n'existent plus dans le code.
+Les commandes slash sont **automatiquement resynchronisées au démarrage**, dans
+le `on_ready`. Le sync est **global** et supprime les commandes qui n'existent
+plus dans le code.
 
-Le sync global, lui, peut mettre jusqu'à une heure à se propager — d'où le
-choix du sync par guild.
+> **Pourquoi pas de sync par guild ?** Sur cette version de `discord.py`,
+> `tree.sync(guild=...)` ne lit que `tree._guild_commands[guild.id]`. Les
+> commandes déclarées dans des cogs sont enregistrées comme **globales**, donc
+> le payload part **vide** — et `bulk_upsert_guild_commands` avec un tableau
+> vide **écrase toutes les commandes du serveur** sans rien inscrire. Symptôme
+> observed : `Commandes synchronisees sur '...' : 0 / 25`.
+>
+> Le sync global a un délai de propagation (jusqu'à 1h selon Discord), mais
+> c'est le seul mode qui inscrit réellement les commandes. Pour que ça soit
+> visible tout de suite dans un seul serveur, le plus simple reste que le bot
+> rejoigne ce seul serveur.
 
 Si tu ajoutes ou renommes une commande en cours de session, `/sync` force la
 mise à jour sans redémarrer.

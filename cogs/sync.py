@@ -20,23 +20,17 @@ class Sync(commands.Cog):
         name="sync", description="Force la resynchronisation des commandes"
     )
     @is_owner()
-    @ac.describe(guilde="Resync uniquement ce serveur (instantane)")
-    async def sync(
-        self,
-        ctx: discord.Interaction,
-        guilde: bool = True,
-    ) -> None:
-        if guilde and ctx.guild:
-            synced = await ctx.bot.tree.sync(guild=ctx.guild)
-            await ctx.send(embed=helpers.ok(
-                f"**{len(synced)}** commandes synchronisees sur **{ctx.guild.name}**."
-            ))
-        else:
-            synced = await ctx.bot.tree.sync()
-            await ctx.send(embed=helpers.ok(
-                f"**{len(synced)}** commandes synchronisees globalement.\n"
-                "*Discord peut mettre jusqu'a 1h a propager.*"
-            ))
+    async def sync(self, ctx: discord.Interaction) -> None:
+        # Sync global : c'est le seul mode qui inscrice reellement les
+        # commandes de cogs sur cette version de discord.py. Le sync par
+        # guild partirait avec un payload vide et effacerait les commandes.
+        synced = await ctx.bot.tree.sync()
+        await ctx.send(embed=helpers.ok(
+            f"**{len(synced)}** commandes synchronisees.\n"
+            "*Discord peut mettre jusqu'a 1h a les propager partout.*"
+            if synced else
+            "Aucune commande a synchroniser."
+        ))
 
     @ac.command(
         name="commandes", description="Liste les commandes du bot"
