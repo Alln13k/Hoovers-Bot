@@ -1,0 +1,20 @@
+{
+  "name": "hoovers-bot",
+  "version": "1.0.0",
+  "description": "Bot de gestion de gang Hoovers - Discord + Supabase",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "test": "node src/test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.2.3"
+  }
+}

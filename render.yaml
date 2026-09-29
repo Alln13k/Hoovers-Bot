@@ -1,16 +1,15 @@
 services:
   - type: worker
     name: hoovers-bot
-    runtime: python
+    runtime: node
     plan: starter
     region: oregon
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    healthCheckPath: ""
+    buildCommand: npm ci
+    startCommand: npm start
     autoDeploy: true
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.13.1
+      - key: NODE_VERSION
+        value: 22.16.0
 
       # ---- A REMPLIR DANS LE DASHBOARD RENDER ----
       # (sync: false = Render te demande la valeur a la creation)

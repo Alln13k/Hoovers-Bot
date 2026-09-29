@@ -1,4 +1,0 @@
-# Commandes slash via discord.app_commands (compatible discord.py 2.x)
-discord.py>=2.4.0,<3
-supabase>=2.7.0
-python-dotenv>=1.0.1
