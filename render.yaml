@@ -1,0 +1,40 @@
+services:
+  - type: worker
+    name: hoovers-bot
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: ""
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.1
+
+      # ---- A REMPLIR DANS LE DASHBOARD RENDER ----
+      # (sync: false = Render te demande la valeur a la creation)
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+      # ---- Valeurs connues, modifiables ici ----
+      - key: CLIENT_ID
+        value: 1536469751390273647
+      - key: GUILD_ID
+        value: 1554583999647850556
+      - key: OWNER_IDS
+        value: 1318668337395269752
+
+      # ---- Salons (laisser vide au depart) ----
+      - key: LOG_SANCTIONS_CHANNEL_ID
+        value: ""
+      - key: LOG_AUDIT_CHANNEL_ID
+        value: ""
+      - key: LOG_TICKETS_CHANNEL_ID
+        value: ""
+      - key: TICKETS_CATEGORY_ID
+        value: ""

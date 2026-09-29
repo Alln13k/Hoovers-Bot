@@ -114,9 +114,23 @@ Chaque ticket = un salon privé (le demandeur + le staff), fermable par le staff
 | Commande | Qui |
 |---|---|
 | `/log [limit]` | Staff |
+| `/sync` | Propriétaire | Resync immédiat du serveur |
+| `/commandes` | Tous | Liste les commandes chargées |
 
 Toutes les actions sont écrites dans `audit_log` **et** postées dans
 `LOG_AUDIT_CHANNEL_ID`.
+
+## Sync des commandes
+
+Les commandes slash sont **automatiquement resynchronisées au démarrage**, au
+moment du `on_ready`. Le sync cible le serveur (`GUILD_ID`) : il est immédiat
+et supprime réellement les commandes qui n'existent plus dans le code.
+
+Le sync global, lui, peut mettre jusqu'à une heure à se propager — d'où le
+choix du sync par guild.
+
+Si tu ajoutes ou renommes une commande en cours de session, `/sync` force la
+mise à jour sans redémarrer.
 
 ## Tests
 ```bash
@@ -137,10 +151,33 @@ cogs/
   members.py           fiches, roster, stats
   recruitment.py       formulaire + validation
   tickets.py           tickets privés
+  sync.py              /sync et /commandes
 supabase_schema.sql    à exécuter une fois dans Supabase
 smoke_test.py          vérifie commandes, permissions, vues, utilitaires
 test_db.py             vérifie la connexion et les tables
 ```
+
+## Déploiement sur Render
+
+Le bot est un **Background Worker**, pas une web app.
+
+1. Render → **New → Blueprint**, pointe sur le repo (le `render.yaml` est fourni)
+2. Ou manuellement : **New → Background Worker**, puis :
+   - Build Command : `pip install -r requirements.txt`
+   - Start Command : `python bot.py`
+3. Variables d'environnement (le minimum) :
+   ```
+   DISCORD_TOKEN=...
+   SUPABASE_URL=...
+   SUPABASE_KEY=<clé service_role>
+   OWNER_IDS=<ton ID>
+   GUILD_ID=1554583999647850556
+   ```
+4. `.python-version` épingle Python 3.13
+
+⚠️ Le plan **gratuit ne supporte pas les Background Workers** — il faut un
+`starter` payant. En plan gratuit (web service), le process se met en veille
+après 15 min sans traffic et le bot se déconnecte.
 
 ## Sécurité
 

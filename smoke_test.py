@@ -36,7 +36,8 @@ print("    [OK] app_commands.command disponible")
 
 # --- 3. Cogs ---
 print("\n[3] Chargement des cogs")
-COGS = ["audit", "moderation", "grades", "members", "recruitment", "tickets"]
+COGS = ["audit", "moderation", "grades", "members", "recruitment", "tickets",
+        "sync"]
 for name in COGS:
     try:
         module = __import__(f"cogs.{name}", fromlist=["setup"])
@@ -86,7 +87,7 @@ EXPECTED = {
     "panel", "grade", "promote", "demote", "grades", "init",
     "fiche", "ajouter", "roster", "stats",
     "setup-recrutement", "postuler-bouton", "candidatures",
-    "setup-tickets", "tickets",
+    "setup-tickets", "tickets", "sync", "commandes",
 }
 missing = sorted(EXPECTED - names)
 if missing:
@@ -99,7 +100,7 @@ print("\n[5] Verification des permissions")
 PROTECTED = {"log", "warn", "mute", "kick", "ban", "unwarn", "unmute",
              "sanctions", "panel", "grade", "promote", "demote", "init",
              "ajouter", "candidatures", "setup-tickets", "tickets",
-             "setup-recrutement", "postuler-bouton"}
+             "setup-recrutement", "postuler-bouton", "sync"}
 unchecked = [c.name for c in cmds if c.name in PROTECTED and not c.checks]
 if unchecked:
     print(f"    [KO] commandes SANS check de permission : {unchecked}")

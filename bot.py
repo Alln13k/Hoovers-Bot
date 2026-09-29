@@ -16,11 +16,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("hoovers")
 
-if not config.DISCORD_TOKEN:
-    sys.exit("DISCORD_TOKEN manquant dans le .env")
-
-if not config.SUPABASE_URL or not config.SUPABASE_KEY:
-    sys.exit("SUPABASE_URL / SUPABASE_KEY manquants dans le .env")
+if config.validate():
+    sys.exit("Configuration incomplete :\n  - " + "\n  - ".join(config.validate()))
 
 intents = discord.Intents.default()
 intents.members = True      # necessaire pour /roster et le panel
@@ -33,10 +30,30 @@ bot = commands.Bot(
 )
 
 
+async def sync_commands() -> None:
+    """Pousse les commandes slash sur le serveur.
+
+    Le sync est cible sur le guild : il est immediat et supprime vraiment
+    les commandes qui n'existent plus dans le code. Un sync global peut
+    mettre jusqu'a une heure a se propager.
+    """
+    guild = bot.get_guild(config.GUILD_ID) if config.GUILD_ID else None
+    try:
+        if guild:
+            synced = await bot.tree.sync(guild=guild)
+            log.info("Commandes synchronisees sur '%s' : %d", guild.name, len(synced))
+        else:
+            synced = await bot.tree.sync()
+            log.info("Commandes synchronisees globalement : %d", len(synced))
+    except discord.HTTPException:
+        log.exception("Echec de la synchronisation des commandes")
+
+
 @bot.event
 async def on_ready() -> None:
     log.info("Connecte en tant que %s (%d guilds)",
              bot.user, len(bot.guilds))
+    await sync_commands()
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching, name="les Hoovers 👀")
@@ -47,7 +64,8 @@ async def main() -> None:
     async with bot:
         # Audit en premier : les autres cogs dependent de son cog
         await add_cog(__import__("cogs.audit", fromlist=["Audit"]).Audit(bot))
-        for name in ("moderation", "grades", "members", "recruitment", "tickets"):
+        for name in ("moderation", "grades", "members", "recruitment",
+                     "tickets", "sync"):
             module = __import__(f"cogs.{name}", fromlist=["setup"])
             await module.setup(bot)
         await bot.start(config.DISCORD_TOKEN)
