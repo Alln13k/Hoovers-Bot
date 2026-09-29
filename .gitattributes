@@ -1,0 +1,11 @@
+# Force LF en depot : le bot tourne sur un hebergeur Linux.
+* text=auto eol=lf
+
+# Fichiers Windows qui doivent rester en CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaire
+*.png binary
+*.jpg binary
