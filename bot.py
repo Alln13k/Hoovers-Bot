@@ -37,14 +37,28 @@ async def sync_commands() -> None:
     les commandes qui n'existent plus dans le code. Un sync global peut
     mettre jusqu'a une heure a se propager.
     """
+    local = bot.tree.get_commands()
     guild = bot.get_guild(config.GUILD_ID) if config.GUILD_ID else None
+
+    log.info("Sync: %d commande(s) en local, %d cog(s) [%s]",
+             len(local), len(bot.cogs), ", ".join(bot.cogs) or "aucun")
+    log.info("Env: python %s / discord.py %s / guild %s",
+             sys.version.split()[0], discord.__version__,
+             guild.name if guild else "INTROUVABLE")
+
+    if not local:
+        log.error("Aucune commande enregistree, sync ignore")
+        return
+
     try:
         if guild:
             synced = await bot.tree.sync(guild=guild)
-            log.info("Commandes synchronisees sur '%s' : %d", guild.name, len(synced))
+            log.info("Commandes synchronisees sur '%s' : %d / %d",
+                     guild.name, len(synced), len(local))
         else:
             synced = await bot.tree.sync()
-            log.info("Commandes synchronisees globalement : %d", len(synced))
+            log.info("Commandes synchronisees globalement : %d / %d",
+                     len(synced), len(local))
     except discord.HTTPException:
         log.exception("Echec de la synchronisation des commandes")
 
