@@ -1,46 +1,54 @@
-// Point d'entree du bot Hoovers.
+// Point d'entree du bot communautaire.
 //
-// Les commandes slash sont enregistrees PAR SERVEUR (guild) au demarrage :
-// c'est immediat et supprime reellement celles qui n'existent plus.
-// Le sync global peut mettre jusqu'a 1h a se propager.
+// Les commandes slash sont enregistrees par serveur au demarrage :
+// instantane, et supprime reellement celles qui n'existent plus.
+// Un sync global mettrait jusqu'a 1h a se propager, ce qui est inacceptable
+// pour un bot destine a des centaines de serveurs.
 
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   Client,
   Collection,
   GatewayIntentBits,
-  ModalBuilder,
-  Partials,
   PermissionFlagsBits,
-  StringSelectMenuBuilder,
+  Partials,
 } from 'discord.js';
 import { config, validate } from './config.js';
 import * as store from './db.js';
-import { logAction } from './audit.js';
-import { embed, ko, ok, info, isAdmin, isOwner } from './helpers.js';
+import { ko } from './helpers.js';
 
-import * as audit from './commands/audit.js';
-import * as moderation from './commands/moderation.js';
-import * as grades from './commands/grades.js';
-import * as members from './commands/members.js';
-import * as recruitment from './commands/recruitment.js';
-import * as tickets from './commands/tickets.js';
+import * as tickets from './features/tickets.js';
+import * as welcome from './features/welcome.js';
 
-const MODULES = { audit, moderation, grades, members, recruitment, tickets };
+const FEATURES = { tickets, welcome };
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
   partials: [Partials.Channel],
 });
 
 client.commands = new Collection();
 
-/** Charge les SlashCommandBuilder de tous les modules. */
+/**
+ * Permissions reellement exigees pour executer une commande.
+ * `setDefaultMemberPermissions` ne fait que masquer la commande dans l'UI :
+ * ca n'empeche personne de l'invoquer. Ce controle est donc obligatoire.
+ */
+const REQUIRED_PERMISSIONS = {
+  'setup-tickets': 'Administrator',
+  tickets: 'ManageChannels',
+  'setup-welcome': 'Administrator',
+  'setup-logs': 'Administrator',
+  config: 'ManageGuild',
+};
+
 function loadCommands() {
   client.commands.clear();
-  for (const [name, mod] of Object.entries(MODULES)) {
+  for (const mod of Object.values(FEATURES)) {
     for (const builder of mod.commands) {
       client.commands.set(builder.name, builder);
     }
@@ -48,77 +56,63 @@ function loadCommands() {
   return client.commands;
 }
 
-/** Enregistre les commandes sur le serveur. Instantané. */
+/** Enregistre les commandes sur chaque serveur. Instantané. */
 async function registerCommands() {
-  const guild = client.guilds.cache.get(config.guildId);
   const body = [...client.commands.values()].map((c) => c.toJSON());
-  const target = guild ? guild.id : client.user?.id;
+  const guilds = client.guilds.cache;
 
-  if (!target) {
-    console.error('[sync] ni serveur ni application, sync impossible');
-    return;
-  }
+  // Un seul appel REST pour tout le monde
+  await client.applicationCommands.bulkPut(client.commands);
 
-  try {
-    if (guild) {
-      await client.applicationCommands.set(target, body);
-      console.log(`[sync] ${body.length} commandes enregistrees sur '${guild.name}'`);
-    } else {
-      await client.applicationCommands.set(target, body, { guildId: config.guildId });
-      console.log(`[sync] ${body.length} commandes enregistrees (global)`);
-    }
-  } catch (e) {
-    console.error('[sync] echec :', e.message);
-  }
+  console.log(`[sync] ${body.length} commandes x ${guilds.size} serveur(s)`);
 }
+
+// ------------------------------------------------------------- evenements
 
 client.once('ready', async () => {
   console.log(`[ready] ${client.user.tag} sur ${client.guilds.cache.size} serveur(s)`);
-  await registerCommands();
-  client.user.setActivity('les Hoovers 👀', { type: 3 });
+  try {
+    await registerCommands();
+  } catch (e) {
+    console.error('[sync] echec:', e.message);
+  }
+  client.user.setActivity('votre serveur', { type: 3 });
 
-  // Nettoyage des sanctions de mute expirees toutes les 5 min
+  // Enregistre les nouveaux serveurs pour le dashboard
+  for (const guild of client.guilds.cache.values()) {
+    store.upsertGuild(guild).catch((e) => console.error('[db] upsertGuild:', e.message));
+  }
+
+  // Rafraichit le nom/icone une fois par jour
   setInterval(async () => {
     for (const guild of client.guilds.cache.values()) {
-      try {
-        const n = await moderation.sweepExpiredMutes(guild);
-        if (n) console.log(`[mute] ${n} sanction(s) expiree(s) close(s) sur ${guild.name}`);
-      } catch (e) {
-        console.error('[mute] sweep impossible:', e.message);
-      }
+      await store.touchGuild(guild.id);
     }
-  }, 5 * 60_000);
+  }, 24 * 60 * 60_000);
 });
 
-client.on('error', (e) => console.error('[discord]', e));
-client.loginError = (e) => console.error('[login]', e.message);
+client.on('guildCreate', async (guild) => {
+  console.log(`[+] ${guild.name} (${guild.id})`);
+  await store.upsertGuild(guild).catch((e) => console.error('[db] guildCreate:', e.message));
+  try {
+    await guild.commands.set([...client.commands.values()].map((c) => c.toJSON()));
+  } catch (e) {
+    console.error('[sync] guildCreate:', e.message);
+  }
+});
 
-// ---------------------------------------------------------- interactions
+client.on('guildDelete', (guild) => {
+  console.log(`[-] ${guild.name} (${guild.id})`);
+  store.deleteGuild(guild.id).catch((e) => console.error('[db] guildDelete:', e.message));
+});
 
-// Permissions reellement exigees pour executer chaque commande.
-// `setDefaultMemberPermissions` ne fait que masquer la commande dans l'UI :
-// ca n'empeche personne de l'invoquer. Ce controle est donc obligatoire.
-const REQUIRED_PERMISSIONS = {
-  log: 'ManageRoles',
-  warn: 'ManageRoles',
-  mute: 'ModerateMembers',
-  kick: 'KickMembers',
-  ban: 'BanMembers',
-  unwarn: 'ManageRoles',
-  unmute: 'ModerateMembers',
-  sanctions: 'ManageRoles',
-  panel: 'Administrator',
-  grade: 'Administrator',
-  init: 'Administrator',
-  promote: 'ManageRoles',
-  demote: 'ManageRoles',
-  ajouter: 'ManageRoles',
-  'setup-recrutement': 'Administrator',
-  'postuler-bouton': 'Administrator',
-  candidatures: 'ManageRoles',
-  'setup-tickets': 'Administrator',
-  tickets: 'ManageRoles',
-};
+client.on('guildMemberAdd', (member) => {
+  welcome.onMemberJoin(member).catch((e) => console.error('[join]', e.message));
+});
+
+client.on('guildMemberRemove', (member) => {
+  welcome.onMemberLeave(member).catch((e) => console.error('[leave]', e.message));
+});
 
 client.on('interactionCreate', async (interaction) => {
   try {
@@ -126,11 +120,11 @@ client.on('interactionCreate', async (interaction) => {
       const need = REQUIRED_PERMISSIONS[interaction.commandName];
       if (need && !interaction.memberPermissions?.has(need)) {
         return await interaction.reply({
-          embeds: [ko("Tu n'as pas la permission necessaire pour cette commande.")],
+          embeds: [ko("Tu n'as pas la permission necessaire.")],
           ephemeral: true,
         });
       }
-      const mod = Object.values(MODULES).find((m) =>
+      const mod = Object.values(FEATURES).find((m) =>
         m.commands.some((c) => c.name === interaction.commandName),
       );
       if (!mod) return interaction.reply({ embeds: [ko('Commande inconnue.')], ephemeral: true });
@@ -138,14 +132,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton()) return await handleButton(interaction);
-    if (interaction.isStringSelectMenu()) return await handleSelect(interaction);
     if (interaction.isModalSubmit()) return await handleModal(interaction);
   } catch (e) {
     console.error(`[interaction] ${e.stack ?? e.message}`);
-    const payload = {
-      embeds: [ko(`Erreur interne : ${e.message}`)],
-      ephemeral: true,
-    };
+    const payload = { embeds: [ko(`Erreur interne : ${e.message}`)], ephemeral: true };
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(payload).catch(() => {});
     } else {
@@ -157,224 +147,38 @@ client.on('interactionCreate', async (interaction) => {
 async function handleButton(interaction) {
   const [namespace, action, arg] = interaction.customId.split(':');
 
-  if (namespace === 'recruit' && action === 'apply') {
-    return interaction.showModal(recruitment.applicationModal());
-  }
-
   if (namespace === 'ticket' && action === 'open') {
-    return tickets.createTicket(interaction);
+    const config = await store.getConfig(interaction.guildId);
+    if (!config.tickets_enabled) {
+      return interaction.reply({ embeds: [ko("Les tickets ne sont pas actives sur ce serveur.")], ephemeral: true });
+    }
+    return interaction.showModal(tickets.ticketModal(config.tickets_count));
   }
 
   if (namespace === 'ticket' && action === 'close') {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels)) {
       return interaction.reply({ embeds: [ko('Reserve au staff.')], ephemeral: true });
     }
-    return tickets.closeTicket(interaction);
-  }
-
-  if (namespace === 'review') {
-    return handleReview(interaction, action, arg);
-  }
-
-  if (namespace === 'panel' && action === 'delete') {
-    return interaction.reply({ embeds: [info('Supprime un grade avec `/grade action:supprimer`.')], ephemeral: true });
+    return tickets.closeTicket(interaction, arg);
   }
 
   return interaction.reply({ embeds: [ko('Bouton inconnu.')], ephemeral: true });
 }
 
-async function handleReview(interaction, action, appId) {
-  if (!isAdmin(interaction)) {
-    return interaction.reply({ embeds: [ko('Reserve aux administrateurs.')], ephemeral: true });
-  }
-  const guild = interaction.guild;
-  const row = await store.getApplication(appId);
-  if (!row) {
-    return interaction.reply({ embeds: [ko('Candidature introuvable.')], ephemeral: true });
-  }
-  const applicant = guild.members.cache.get(row.user_id);
-
-  if (action === 'accept') {
-    await interaction.deferReply({ ephemeral: true });
-    await store.setApplicationStatus(appId, 'accepted', interaction.user.id);
-    if (applicant) {
-      await applicant
-        .user.send({
-          embeds: [ok('**Ta candidature aux Hoovers a ete acceptee.**\nUn membre du staff te contactera.')],
-        })
-        .catch(() => {});
-    }
-    await interaction.editReply({ embeds: [ok(`Candidature de ${applicant ?? row.user_id} acceptee.`)], components: [] });
-    await logAction(guild, 'recruit', interaction.user, applicant, { action_detail: 'Candidature acceptee' });
-    return;
-  }
-
-  if (action === 'reject') {
-    pendingRejects.set(interaction.user.id, appId);
-    return interaction.showModal(recruitment.rejectModal());
-  }
-
-  if (action === 'profile') {
-    const answers = Object.entries(row.answers ?? {})
-      .map(([k, v]) => `**${k} :** ${v}`)
-      .join('\n');
-    return interaction.reply({ embeds: [info(answers)], ephemeral: true });
-  }
-}
-
-const pendingRejects = new Map();
-
-async function handleSelect(interaction) {
-  const [namespace, action] = interaction.customId.split(':');
-
-  if (namespace === 'panel' && action === 'assign') {
-    const guild = interaction.guild;
-    const rankId = interaction.values[0];
-    const ranks = await store.getRanks(guild.id);
-    const rank = ranks.find((r) => r.id === rankId);
-    if (!rank) {
-      return interaction.reply({ embeds: [ko('Grade introuvable.')], ephemeral: true });
-    }
-    await interaction.deferReply({ ephemeral: true });
-
-    const candidates = [...guild.members.cache.values()]
-      .filter((m) => !m.user.bot && m.id !== client.user.id)
-      .slice(0, 25);
-    if (!candidates.length) {
-      return interaction.editReply({ embeds: [ko('Aucun membre assignable.')] });
-    }
-
-    return interaction.editReply({
-      content: `Attribuer le grade **${rank.name}** a quel membre ?`,
-      components: [
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(`assign:${rankId}`)
-            .setPlaceholder('Membre a promoter...')
-            .addOptions(
-              candidates.map((m) => ({
-                label: m.displayName.slice(0, 100),
-                description: `ID ${m.id}`,
-                value: m.id,
-              })),
-            ),
-        ),
-      ],
-    });
-  }
-
-  if (namespace === 'assign') {
-    const rankId = interaction.customId.split(':')[1];
-    const member = interaction.guild.members.cache.get(interaction.values[0]);
-    if (!member) {
-      return interaction.reply({ embeds: [ko('Membre introuvable.')], ephemeral: true });
-    }
-    await interaction.deferReply({ ephemeral: true });
-
-    const ranks = await store.getRanks(interaction.guild.id);
-    const rank = ranks.find((r) => r.id === rankId);
-    const applied = rank ? await grades.applyRank(interaction.guild, member, rank) : false;
-    if (rank) {
-      await store.upsertMember(interaction.guild.id, member.id, {
-        rank_id: rank.id,
-        username: member.user.username,
-      });
-    }
-    await interaction.editReply({
-      content: null,
-      embeds: [
-        ok(
-          `**${member}** est now **${rank?.name ?? '?'}**.` +
-            (applied || !rank ? '' : '\n*(Role Discord non applique.)*'),
-        ),
-      ],
-      components: [],
-    });
-    await logAction(interaction.guild, 'promote', interaction.user, member, {
-      grade: rank?.name ?? '?',
-      applied,
-    });
-  }
-}
-
 async function handleModal(interaction) {
   const [namespace, action] = interaction.customId.split(':');
-
-  if (namespace === 'recruit' && action === 'form') {
-    const guild = interaction.guild;
-    const { data: pending } = await store.db()
-      .from('applications')
-      .select('id')
-      .eq('guild_id', guild.id)
-      .eq('user_id', interaction.user.id)
-      .eq('status', 'pending');
-    if (pending?.length) {
-      return interaction.reply({
-        embeds: [ko('Tu as deja une candidature **en attente**.')],
-        ephemeral: true,
-      });
-    }
-
+  if (namespace === 'ticket' && action === 'form') {
     const answers = {};
     for (const field of interaction.fields.components.map((r) => r.data)) {
       answers[field.custom_id] = interaction.fields.getTextInput(field.custom_id);
     }
-    await interaction.reply({
-      embeds: [ok('Candidature envoyee. Un membre du staff te repond bientot.', {
-        thumbnail: interaction.user.displayAvatarURL(),
-      })],
-      ephemeral: true,
-    });
-
-    const row = await store.createApplication(guild.id, interaction.user.id, answers);
-    const settings = await store.getSettings(guild.id);
-    const channel = settings.recruit_channel_id
-      ? guild.channels.cache.get(settings.recruit_channel_id)
-      : null;
-    if (channel) {
-      const lines = Object.entries(answers)
-        .map(([k, v]) => `**${k} :** ${v}`)
-        .join('\n');
-      await channel.send({
-        embeds: [
-          embed({
-            title: 'Nouvelle candidature',
-            description: `**${interaction.user}** a postule.\n\n${lines}`,
-            thumbnail: interaction.user.displayAvatarURL(),
-          }),
-        ],
-        components: [recruitment.reviewRow(row.id)],
-      });
-    }
-    return;
+    return tickets.createTicket(interaction, answers);
   }
-
-  if (namespace === 'recruit' && action === 'reject') {
-    const appId = pendingRejects.get(interaction.user.id);
-    if (!appId) {
-      return interaction.reply({ embeds: [ko('Session de refus expiree, ressaisis le bouton.')], ephemeral: true });
-    }
-    pendingRejects.delete(interaction.user.id);
-    const reason = interaction.fields.getTextInput('reason');
-    await interaction.deferReply({ ephemeral: true });
-    await store.setApplicationStatus(appId, 'rejected', interaction.user.id, reason);
-
-    const row = await store.getApplication(appId);
-    const applicant = interaction.guild.members.cache.get(row?.user_id);
-    if (applicant) {
-      await applicant
-        .user.send({
-          embeds: [ko(`**Ta candidature a ete refusee.**\n**Motif :** ${reason}`)],
-        })
-        .catch(() => {});
-    }
-    await interaction.editReply({ embeds: [ko(`Candidature refusee.\n**Motif :** ${reason}`)] });
-    await logAction(interaction.guild, 'recruit', interaction.user, applicant, {
-      action_detail: 'Candidature refusee',
-      motif: reason,
-    });
-  }
+  return interaction.reply({ embeds: [ko('Formulaire inconnu.')], ephemeral: true });
 }
+
+client.on('error', (e) => console.error('[discord]', e));
+client.on('shardError', (e) => console.error('[shard]', e.message));
 
 // ------------------------------------------------------------------ boot
 

@@ -1,194 +1,148 @@
-# Hoovers — Bot Discord
+# Bot communautaire
 
-Bot de gestion de gang pour ton serveur FiveM. Pilote grades, sanctions,
-recrutement, tickets et fiches membres. 100% côté Discord, zéro bridge FiveM.
+Bot Discord installable sur n'importe quel serveur, avec un dashboard web
+pour configurer chaque serveur indépendamment.
 
-## Stack
-- Node.js 22+ / `discord.js` 14
-- Supabase (Postgres) avec RLS activé, accès via `service_role`
-- Commandes slash enregistrées **par serveur** (instantané)
+Node.js 22 · discord.js 14 · Supabase
 
-## Setup
+## Fonctionnalités v1
 
-### 1. Base de données
-Ouvre **Supabase → SQL Editor → New query**, colle le contenu de
-`supabase_schema.sql` et clique **Run**. Ça crée les tables `ranks`,
-`members`, `sanctions`, `applications`, `tickets`, `audit_log`, `settings`.
-
-### 2. Créer le bot sur Discord
-1. https://discord.com/developers/applications → **New Application**
-2. Menu **Bot** → **Reset Token** → copie-le
-3. **Bot Permissions** → coche :
-   - `Manage Roles`, `Manage Nicknames`, `Manage Server`
-   - `Kick Members`, `Ban Members`, `Moderate Members`
-   - `Read Message History`, `Send Messages`, `Embed Links`
-   - `Attach Files`, `Use External Emojis`
-4. **Bot → Privileged Gateway Intents** → active **Server Members Intent**
-   (obligatoire pour `/roster` et le panel des grades)
-5. **OAuth2 → URL Generator** → coche `bot` + les permissions ci-dessus
-   → ouvre l'URL générée pour inviter le bot sur ton serveur
-
-### 3. Configurer le `.env`
-Copie `.env.example` vers `.env` et remplis :
-- `DISCORD_TOKEN`, `OWNER_IDS` (ton ID)
-- `CLIENT_ID`, `GUILD_ID`
-- `SUPABASE_URL`, `SUPABASE_KEY` (**`service_role`**, pas `anon`)
-- Les IDs de salons (clic droit → *Copier l'identifiant du salon*)
-
-### 4. Lancer
-```bash
-npm install
-npm run deploy     # enregistre les commandes sur ton serveur
-npm start          # lance le bot
-```
-
-## Premier lancement
-
-```
-/init                 crée les grades Boss → Lieuten → Soldat → Recrue → Prospect
-                      (+ les rôles Discord correspondants)
-```
-
-Puis :
-```
-/setup-recrutement    envoie le bouton « Postuler » dans un salon
-/setup-tickets        envoie le bouton de ticket dans un salon
-```
-
-## Commandes
-
-### Grades & rôles
-| Commande | Qui | Effet |
+| | Commande | Description |
 |---|---|---|
-| `/panel` | Admin | Panel visuel : assigner un grade à un membre |
-| `/grade` | Admin | Créer ou modifier un grade (position, couleur, rôle) |
-| `/init` | Admin | Hiérarchie par défaut |
-| `/grades` | Tous | Affiche la hiérarchie |
-| `/promote` | Staff | Attribue un grade + applique le rôle |
-| `/demote` | Staff | Retire les rôles gang |
+| 👋 | `/setup-welcome` | Messages de bienvenue et de départ, rôle auto |
+| 🎫 | `/setup-tickets` | Tickets avec formulaire (1 à 5 questions) |
+| 📋 | `/setup-logs` | Salon de logs |
+| ⚙️ | `/config` | Affiche la configuration en cours |
+| 📊 | `/tickets` | État des tickets du serveur |
 
-### Sanctions
-| Commande | Durée |
-|---|---|
-| `/warn membre raison` | — |
-| `/mute membre raison duree` | `30m`, `2h`, `7j`, `perm` |
-| `/kick membre raison` | — |
-| `/ban membre raison duree` | `perm` ou `7j` |
-| `/unwarn membre [id]` | retire 1 warn ou tout l'historique |
-| `/unmute membre` | fin anticipée |
-| `/sanctions membre` | historique |
+Tout se règle aussi depuis le site, avec un texte d'aide dans l'interface.
 
-`/mute` utilise le **timeout natif de Discord** (jusqu'à 28 jours), aucun rôle
-requis. Au-delà, ou pour un mute définitif, le bot utilise un rôle `Muted` s'il
-existe. Les timeouts expirent tout seuls côté Discord ; un nettoyage de la base
-tourne toutes les 5 min.
+## Architecture
 
-### Membres & recrutement
-| Commande | Qui | Effet |
-|---|---|---|
-| `/fiche [membre]` | Tous | Profil : grade, statut, warns, ancienneté |
-| `/ajouter membre` | Staff | Crée/met à jour une fiche |
-| `/roster` | Tous | Liste complète groupée par grade |
-| `/stats` | Tous | Effectifs et warns cumulés |
-| `/candidatures` | Staff | Candidatures en attente |
+Deux processus distincts, deux services Render :
 
-### Tickets
-| Commande | Qui |
-|---|---|
-| `/setup-tickets` | Admin |
-| `/tickets [membre]` | Staff |
+- **`src/index.js`** — le bot Discord (worker)
+- **`src/web.js`** — le dashboard (web service)
 
-Chaque ticket = un salon privé (le demandeur + le staff), fermable par le staff.
-Un seul ticket ouvert par personne à la fois.
+Ils partagent la même base. Chaque ligne porte un `guild_id` : un serveur ne
+voit jamais les données d'un autre.
 
-### Journal
-| Commande | Qui |
-|---|---|
-| `/log [limite]` | Staff |
-| `/commandes` | Tous | Liste les commandes chargées |
-
-Toutes les actions sont écrites dans `audit_log` **et** postées dans
-`LOG_AUDIT_CHANNEL_ID`.
-
-## Enregistrement des commandes
-
-Les 24 commandes sont enregistrées **par serveur** au démarrage
-(`client.applicationCommands.set(guildId, ...)`). C'est instantané et ça supprime
-réellement les commandes qui n'existent plus.
-
-`npm run deploy` fait la même chose sans lancer le bot, utile quand tu ajoutes
-une commande et veux la voir immédiatement.
-
-> Un sync **global** aurait mis jusqu'à 1h à se propager. Le sync par serveur
-> évite ça, à condition que le bot ne soit pas présent sur d'autres serveurs.
-
-## Structure
 ```
 src/
-  index.js              point d'entrée, sync, routage, permissions
-  config.js             lecture du .env
-  db.js                 couche d'accès Supabase
-  helpers.js            embeds, permissions, parsing de durée
-  audit.js              journal (base + salon de log)
-  deploy-commands.js    enregistrement manuel des commandes
-  test.js               vérification hors ligne
-  commands/
-    audit.js            /log /commandes
-    moderation.js       warn / mute / kick / ban / unwarn / unmute / sanctions
-    grades.js           /panel /grade /init /promote /demote /grades
-    members.js          /fiche /ajouter /roster /stats
-    recruitment.js      /setup-recrutement /postuler-bouton /candidatures
-    tickets.js          /setup-tickets /tickets
-supabase_schema.sql     à exécuter une fois dans Supabase
+  index.js            bot : commandes, événements, enregistrement par serveur
+  web.js              point d'entrée du dashboard
+  config.js           variables d'environnement
+  db.js               accès Supabase (isolation par guild_id)
+  helpers.js          embeds, parsing, rendu de messages
+  features/
+    welcome.js        bienvenue, départ, rôle auto, /config
+    tickets.js        tickets privés + formulaire
+  web/
+    server.js         routage HTTP
+    auth.js           OAuth2 Discord + sessions
+    views.js          rendu HTML
+supabase_schema.sql   à exécuter une fois dans Supabase
 ```
+
+## Installation
+
+### 1. Base de données
+Supabase → **SQL Editor → New query**, colle `supabase_schema.sql`, **Run**.
+Crée `guilds`, `guild_admins`, `guild_config`, `tickets`, `web_sessions`.
+
+### 2. Application Discord
+[discord.com/developers/applications](https://discord.com/developers/applications) → **New Application** → **Bot** → **Reset Token**.
+
+Permissions du bot :
+`Manage Roles` · `Manage Channels` · `Manage Server` · `Kick Members` ·
+`Ban Members` · `Moderate Members` · `Read Message History` ·
+`Send Messages` · `Embed Links` · `Attach Files`
+
+**Bot → Privileged Gateway Intents** → activer **Server Members Intent**
+(indispensable pour les messages de bienvenue).
+
+### 3. OAuth2 du site
+**OAuth2 → Redirects** → ajouter `https://ton-domaine/auth/callback`
+
+### 4. Lancer
+
+```bash
+npm install
+cp .env.example .env   # puis remplir
+npm test               # vérifie tout hors ligne
+npm start              # le bot
+npm run web            # le dashboard
+```
+
+## Le dashboard
+
+1. L'utilisateur clique sur **Se connecter avec Discord**
+2. OAuth2 → le site voit ses serveurs où il a **Administrateur**
+3. Il clique **Configurer** et règle bienvenue, tickets, rôle auto, logs
+
+Un bot peut être dans des milliers de serveurs. Chaque serveur est isolé :
+les tickets, la config et les logs sont filtrés par `guild_id` à chaque requête.
 
 ## Sécurité
 
-- `.env` est dans `.gitignore`, ne le commit jamais.
-- **Les permissions sont vérifiées deux fois** : `setDefaultMemberPermissions`
-  masque la commande dans l'interface, mais n'empêche personne de l'invoquer.
-  `src/index.js` contient une table `REQUIRED_PERMISSIONS` qui bloque
-  réellement l'exécution. Les deux sont nécessaires.
-- La clé `service_role` contourne le RLS : **jamais** dans un salon Discord,
-  **jamais** dans du code client, **jamais** en message.
-- Seule la `service_role` parle à la base, aucune policy n'est ouverte.
-- Si la clé fuite → Supabase → Project Settings → API → **Reset**.
+- **Les permissions sont vérifiées deux fois.** `setDefaultMemberPermissions`
+  masque la commande dans l'interface mais n'empêche personne de l'invoquer.
+  `REQUIRED_PERMISSIONS` dans `src/index.js` bloque réellement l'exécution.
+  Les deux sont nécessaires.
+- **Sessions** : token aléatoire de 32 octets, stocké **haché** (SHA-256) en
+  base, cookie `HttpOnly` + `SameSite=Lax`.
+- **Anti-CSRF** : un `state` aléatoire est comparé en temps constant au retour
+  d'OAuth2.
+- **XSS** : tout ce qui vient d'un utilisateur passe par `esc()` avant d'être
+  mis dans le HTML. C'est vérifié par un test.
+- **`service_role`** : contorne le RLS. Jamais dans un salon, jamais côté
+  client, jamais dans un message.
+- **RLS activé** sur toutes les tables, aucune policy ouverte : seul le code
+  serveur accède à la base.
+
+Si une clé fuite → Supabase → Project Settings → API → **Reset**.
 
 ## Tests
+
 ```bash
 npm test
 ```
+
 Vérifie hors ligne : config, unicité des commandes, validité du JSON envoyé à
-Discord, permissions (visibilité **et** exécution), parsing de durée, exports
-des modules. N'appelle pas Discord.
+Discord, permissions (visibilité **et** exécution), parsing de durée, rendu des
+messages, échappement HTML, rendu des pages, cohérence code ↔ schéma SQL.
 
-## Déploiement sur Render
+N'appelle ni Discord ni Supabase.
 
-Le bot est un **Background Worker**, pas une web app.
+## Déploiement
 
-1. Render → **New → Background Worker**, branche `main`
-2. Build Command : `npm ci`
-3. Start Command : `npm start`
-4. Variables d'environnement :
-   ```
-   DISCORD_TOKEN=...
-   CLIENT_ID=...
-   GUILD_ID=...
-   OWNER_IDS=...
-   SUPABASE_URL=...
-   SUPABASE_KEY=<clé service_role>
-   ```
-5. `NODE_VERSION=22.16.0`
+Le `render.yaml` définit les deux services (worker + web). Si tu déploies à la
+main :
 
-Un `render.yaml` est fourni si tu préfères le deploy par Blueprint.
+| | Bot | Dashboard |
+|---|---|---|
+| Type | **Background Worker** | **Web Service** |
+| Build | `npm ci` | `npm ci` |
+| Start | `npm start` | `npm run web` |
 
-⚠️ Le plan **gratuit ne supporte pas les Background Workers** — il faut un
-`starter` payant. En plan gratuit (web service), le process se met en veille
-après 15 min sans traffic et le bot se déconnecte.
+Le plan gratuit de Render ne permet pas les Background Workers. Un bot gratuit
+se met en veille après 15 min sans trafic et se déconnecte.
+
+## Idées pour la suite
+
+Non implémentées, notées pour plus tard :
+
+- Logs structurés (join/leave/suppression de messages) — la table est prête
+- Anti-spam : filtres de mots, limite de mentions, slowmode
+- Réactions automatiques / rôles par message
+- Commandes `/help` et `/stats` du bot
+- Webhooks : `POST /hooks/:guild_id` pour pousser des events depuis un site
+- Premium : quotas, tableaux de bord anonymes, export de données
 
 ## Limitations connues
-- Un seul ticket ouvert par personne à la fois.
-- Le panel `/panel` est éphémère (visible que par toi). Les boutons de
-  recrutement et de ticket sont persistants.
-- `/roster` se limite à 25 membres par grade dans l'affichage Discord.
-- Le timeout natif Discord plafonne à 28 jours ; au-delà il faut le rôle `Muted`.
+
+- `/roster` n'existe pas encore (le bot n'a pas vocation à lister les membres).
+- Le dashboard ne montre que les serveurs où l'utilisateur a `Administrateur`,
+  pas `Manage Guild`.
+- Un utilisateur qui retire le bot depuis un serveur mais garde une session
+  ouverte voit encore la config en lecture.

@@ -1,39 +1,54 @@
 services:
+  # ---- Le bot Discord ----
   - type: worker
-    name: hoovers-bot
+    name: bot-discord
     runtime: node
     plan: starter
     region: oregon
     buildCommand: npm ci
     startCommand: npm start
     autoDeploy: true
+    healthCheckPath: ""
     envVars:
       - key: NODE_VERSION
         value: 22.16.0
-
-      # ---- A REMPLIR DANS LE DASHBOARD RENDER ----
-      # (sync: false = Render te demande la valeur a la creation)
       - key: DISCORD_TOKEN
+        sync: false
+      - key: CLIENT_ID
         sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
-
-      # ---- Valeurs connues, modifiables ici ----
-      - key: CLIENT_ID
-        value: 1536469751390273647
-      - key: GUILD_ID
-        value: 1554583999647850556
       - key: OWNER_IDS
-        value: 1318668337395269752
+        sync: false
 
-      # ---- Salons (laisser vide au depart) ----
-      - key: LOG_SANCTIONS_CHANNEL_ID
-        value: ""
-      - key: LOG_AUDIT_CHANNEL_ID
-        value: ""
-      - key: LOG_TICKETS_CHANNEL_ID
-        value: ""
-      - key: TICKETS_CATEGORY_ID
-        value: ""
+  # ---- Le dashboard web ----
+  - type: web
+    name: bot-dashboard
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm ci
+    startCommand: npm run web
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: SITE_URL
+        sync: false
+      - key: PORT
+        value: 3000
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        sync: false

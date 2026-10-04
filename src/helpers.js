@@ -1,64 +1,54 @@
-// Helpers d'embed, de permissions et de parsing.
+// Helpers partages : embeds, permissions, parsing.
 
 import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 
 export const COLORS = {
-  main: 0xe8b54d,
-  error: 0xc0392b,
-  success: 0x27ae60,
-  neutral: 0x3a3a3c,
+  primary: 0x5865f2,
+  success: 0x57f287,
+  error: 0xed4245,
+  neutral: 0x2b2d31,
 };
 
-export const SANCTION_COLORS = {
-  warn: 0xf1c40f,
-  mute: 0x9b59b6,
-  kick: 0xe67e22,
-  ban: 0xc0392b,
-};
-
-export const SANCTION_LABELS = {
-  warn: 'Warn',
-  mute: 'Mute',
-  kick: 'Kick',
-  ban: 'Ban',
-};
-
-export function embed({ title, description, color = COLORS.main, footer, thumbnail }) {
+export function embed({ title, description, color = COLORS.primary, footer, thumbnail, color: c2 }) {
   const e = new EmbedBuilder();
   if (title) e.setTitle(title);
   if (description) e.setDescription(description);
-  e.setColor(color);
+  e.setColor(c2 ?? color);
   if (footer) e.setFooter({ text: footer });
   if (thumbnail) e.setThumbnail(thumbnail);
   return e;
 }
 
-export const ok = (description, extra = {}) =>
-  embed({ title: 'Succes', description, color: COLORS.success, ...extra });
+export const ok = (description, extra) =>
+  embed({ title: '✅ Succes', description, color: COLORS.success, ...extra });
 
-export const ko = (description, extra = {}) =>
-  embed({ title: 'Erreur', description, color: COLORS.error, ...extra });
+export const ko = (description, extra) =>
+  embed({ title: '⚠️ Erreur', description, color: COLORS.error, ...extra });
 
-export const info = (description, extra = {}) =>
-  embed({ title: 'Info', description, color: COLORS.neutral, ...extra });
-
-/** Staff = peut gerer les roles. */
-export const isStaff = (interaction) =>
-  interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles);
+export const info = (description, extra) =>
+  embed({ title: 'ℹ️ Info', description, color: COLORS.neutral, ...extra });
 
 export const isAdmin = (interaction) =>
   interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
 
-export const isOwner = (interaction, ownerIds = []) =>
-  ownerIds.includes(interaction.user.id);
+export const isModerator = (interaction) =>
+  interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels) ||
+  interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles);
 
-/**
- * Parse une duree en minutes.
- * Accepte '30m', '2h', '7j', '1j12h', '2h30', '90' (= 90 min).
- * Renvoie null pour 'perm', 'inf' ou une saisie invalide.
- */
+/** Remplace {user}, {username}, {tag}, {server}, {count} dans un texte. */
+export function render(template, { member, guild, count } = {}) {
+  if (!template) return null;
+  return String(template)
+    .replaceAll('{user}', member ? `<@${member.id}>` : '')
+    .replaceAll('{username}', member?.user?.username ?? '')
+    .replaceAll('{tag}', member?.user?.tag ?? '')
+    .replaceAll('{server}', guild?.name ?? '')
+    .replaceAll('{count}', count ?? '');
+}
+
+/** Parse une duree en minutes : '30m', '2h', '7j', '90'. null si invalide. */
 export function parseDuration(text) {
-  if (text === undefined || text === null) return null;
+  if (text === null || text === undefined) return null;
   const value = String(text).trim().toLowerCase();
   if (['', 'perm', 'inf', 'definitif'].includes(value)) return null;
   if (/^\d+$/.test(value)) return Number(value);
@@ -67,7 +57,6 @@ export function parseDuration(text) {
   let total = 0;
   let current = '';
   let seenUnit = false;
-
   for (const ch of value) {
     if (ch >= '0' && ch <= '9') {
       current += ch;
@@ -76,52 +65,21 @@ export function parseDuration(text) {
       current = '';
       seenUnit = true;
     } else {
-      return null; // caractere parasite
+      return null;
     }
   }
   if (!seenUnit) return null;
-  if (current) total += Number(current); // minutes en fin de chaine
+  if (current) total += Number(current);
   return total;
 }
 
-/** Formate des minutes en texte lisible : 90 -> '1h30m'. */
-export function fmtDuration(minutes) {
-  if (minutes === null || minutes === undefined) return 'definitif';
-  const days = Math.floor(minutes / 1440);
-  const rem = minutes % 1440;
-  const hours = Math.floor(rem / 60);
-  const mins = rem % 60;
-  const parts = [];
-  if (days) parts.push(`${days}j`);
-  if (hours) parts.push(`${hours}h`);
-  if (mins) parts.push(`${mins}m`);
-  return parts.join('') || '0m';
-}
-
-/** Parse '1501234567890' ou '<#123>' en Snowflake. */
-export function parseId(text) {
-  if (!text) return null;
-  const clean = String(text).replace(/[<#@>]/g, '').trim();
-  return /^\d+$/.test(clean) ? clean : null;
-}
-
-/** Nom du grade a partir de son id. */
-export function rankName(ranks, rankId) {
-  if (!rankId) return 'Sans grade';
-  const rank = ranks.find((r) => r.id === rankId);
-  return rank ? rank.name : 'Grade supprime';
-}
-
-/** Couche de permissions d'un salon prive de ticket. */
-export async function ticketOverwrites(guild, user) {
-  const staff = guild.members.cache.filter((m) => m.permissions.has(PermissionFlagsBits.ManageChannels));
-  const overwrites = {
-    [guild.roles.everyone.id]: { ViewChannel: false },
-    [guild.members.me.id]: { ViewChannel: true, SendMessages: true, ManageChannels: true },
-    [user.id]: { ViewChannel: true, SendMessages: true },
-  };
-  for (const member of staff.values()) {
-    overwrites[member.id] = { ViewChannel: true, SendMessages: true };
+/** Charge la config d'un serveur. Un echec ne doit jamais casser une commande. */
+export async function safeConfig(guildId) {
+  const { getConfig } = await import('./db.js');
+  try {
+    return await getConfig(guildId);
+  } catch (e) {
+    console.error('[config] chargement impossible:', e.message);
+    return { guild_id: guildId };
   }
-  return overwrites;
 }

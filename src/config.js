@@ -1,10 +1,10 @@
-// Configuration centrale, lue depuis le .env (variables d'env en priorite).
+// Configuration centrale, lue depuis les variables d'environnement.
 
 import 'dotenv/config';
 
 function id(name) {
   const raw = process.env[name]?.trim();
-  return raw ? raw : null;
+  return raw || null;
 }
 
 function idList(name) {
@@ -15,27 +15,41 @@ function idList(name) {
 }
 
 export const config = {
+  // Discord
   token: process.env.DISCORD_TOKEN || '',
   clientId: id('CLIENT_ID'),
-  guildId: id('GUILD_ID'),
+  publicGuildId: id('PUBLIC_GUILD_ID'), // serveur de dev/test, vide en prod
   ownerIds: idList('OWNER_IDS'),
 
+  // Supabase
   supabaseUrl: process.env.SUPABASE_URL || '',
   supabaseKey: process.env.SUPABASE_KEY || '',
 
-  logSanctions: id('LOG_SANCTIONS_CHANNEL_ID'),
-  logAudit: id('LOG_AUDIT_CHANNEL_ID'),
-  logTickets: id('LOG_TICKETS_CHANNEL_ID'),
-  ticketsCategory: id('TICKETS_CATEGORY_ID'),
+  // Site web
+  port: Number(process.env.PORT || 3000),
+  siteUrl: process.env.SITE_URL || '',
+  clientSecret: process.env.CLIENT_SECRET || '',
+  sessionSecret: process.env.SESSION_SECRET || '',
 };
 
-/** Retourne la liste des variables manquantes. */
+const REQUIRED = {
+  DISCORD_TOKEN: 'token',
+  CLIENT_ID: 'clientId',
+  SUPABASE_URL: 'supabaseUrl',
+  SUPABASE_KEY: 'supabaseKey',
+  CLIENT_SECRET: 'clientSecret',
+  SESSION_SECRET: 'sessionSecret',
+};
+
+/** Retourne la liste des variables manquantes ou invalides. */
 export function validate() {
   const problems = [];
-  if (!config.token) problems.push('DISCORD_TOKEN est vide');
-  if (!config.supabaseUrl) problems.push('SUPABASE_URL est vide');
-  if (!config.supabaseKey) problems.push('SUPABASE_KEY est vide');
-  if (!config.guildId) problems.push('GUILD_ID est vide');
-  if (!config.clientId) problems.push('CLIENT_ID est vide');
+  for (const [name, key] of Object.entries(REQUIRED)) {
+    if (!config[key]) problems.push(`${name} est vide`);
+  }
+  if (!config.siteUrl) problems.push('SITE_URL est vide (ex: https://monbot.fr)');
+  if (config.token && config.token.split('.').length < 3) {
+    problems.push('DISCORD_TOKEN a une forme invalide');
+  }
   return problems;
 }

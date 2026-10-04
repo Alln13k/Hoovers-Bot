@@ -1,111 +1,82 @@
 -- =============================================================
---  HOOVERS - Schema Supabase
+--  Bot communautaire - Schema Supabase
 --  A coller dans Supabase > SQL Editor > New query > Run
+--
+--  Modele multi-tenant : chaque ligne est isolee par guild_id.
+--  Un serveur ne voit jamais les donnees d'un autre.
 -- =============================================================
 
--- ---------- GRADES (hiérarchie du gang) ----------
-create table if not exists public.ranks (
-  id            uuid primary key default gen_random_uuid(),
-  guild_id      bigint      not null,
-  name          text        not null,
-  discord_role_id bigint,                    -- rôle Discord appliqué automatiquement
-  position      int         not null default 0,   -- 0 = plus bas, 100 = boss
-  color         text        default '#9ca3af',
-  created_at    timestamptz default now()
+-- ---------- SERVEURS ----------
+create table if not exists public.guilds (
+  guild_id        bigint primary key,
+  name            text,
+  owner_id        bigint,                  -- proprio du serveur
+  installed_by    bigint,                  -- qui a invite le bot
+  icon_hash       text,                    -- hash de l'icone, pas une URL
+  locale          text default 'fr',
+  created_at      timestamptz default now(),
+  last_seen_at    timestamptz default now()
 );
 
-create index if not exists ranks_guild_idx on public.ranks (guild_id);
-
--- ---------- FICHES MEMBRES ----------
-create table if not exists public.members (
-  id            uuid primary key default gen_random_uuid(),
+-- ---------- ADMINS (utilisateurs autorises a configurer le serveur) ----------
+create table if not exists public.guild_admins (
   guild_id      bigint      not null,
   user_id       bigint      not null,
-  username      text,
-  rank_id       uuid references public.ranks (id) on delete set null,
-  status        text        not null default 'active',  -- active | recrue | inactif | parti
-  notes         text,
-  joined_at     timestamptz default now(),
-  unique (guild_id, user_id)
+  role_id       bigint,                    -- restreint a ce role Discord (optionnel)
+  added_at      timestamptz default now(),
+  primary key (guild_id, user_id)
 );
 
-create index if not exists members_guild_idx on public.members (guild_id);
-
--- ---------- SANCTIONS ----------
-create table if not exists public.sanctions (
-  id            uuid primary key default gen_random_uuid(),
-  guild_id      bigint      not null,
-  user_id       bigint      not null,
-  moderator_id  bigint      not null,
-  type          text        not null,          -- warn | mute | kick | ban
-  reason        text        not null,
-  duration_minutes int,                       -- null = définitif
-  active        boolean     not null default true,
-  expires_at    timestamptz,
-  created_at    timestamptz default now()
+-- ---------- CONFIG PAR SERVEUR ----------
+-- Une seule ligne par serveur, upsert a chaque modification depuis le site.
+create table if not exists public.guild_config (
+  guild_id          bigint primary key,
+  welcome_channel   bigint,
+  welcome_message   text,
+  leave_channel     bigint,
+  leave_message     text,
+  log_channel       bigint,
+  tickets_category  bigint,
+  tickets_enabled   boolean default false,
+  tickets_message   text,
+  tickets_count     int default 1,         -- 1..5 questions du formulaire
+  autorole_enabled  boolean default false,
+  autorole_id       bigint,                 -- role donne a l'accueil
+  automod_enabled   boolean default false,
+  updated_at        timestamptz default now()
 );
-
-create index if not exists sanctions_user_idx on public.sanctions (guild_id, user_id);
-
--- ---------- RECRUTEMENT ----------
-create table if not exists public.applications (
-  id            uuid primary key default gen_random_uuid(),
-  guild_id      bigint      not null,
-  user_id       bigint      not null,
-  answers       jsonb       not null,
-  status        text        not null default 'pending',  -- pending | accepted | rejected
-  reviewed_by   bigint,
-  review_note   text,
-  created_at    timestamptz default now()
-);
-
-create index if not exists apps_guild_idx on public.applications (guild_id, status);
 
 -- ---------- TICKETS ----------
 create table if not exists public.tickets (
-  id            uuid primary key default gen_random_uuid(),
-  guild_id      bigint      not null,
-  user_id       bigint      not null,
-  channel_id    bigint,
-  category_id   bigint,
-  subject       text,
-  status        text        not null default 'open',  -- open | closed
-  closed_by     bigint,
-  created_at    timestamptz default now(),
-  closed_at     timestamptz
+  id          uuid primary key default gen_random_uuid(),
+  guild_id    bigint      not null,
+  channel_id  bigint      not null unique,
+  user_id     bigint      not null,
+  subject     text,
+  answers     jsonb       default '{}'::jsonb,
+  status      text        not null default 'open',   -- open | closed
+  closed_by   bigint,
+  created_at  timestamptz default now(),
+  closed_at   timestamptz
 );
 
--- ---------- JOURNAL D'AUDIT ----------
-create table if not exists public.audit_log (
-  id            bigserial primary key,
-  guild_id      bigint      not null,
-  actor_id      bigint      not null,
-  action        text        not null,
-  target_id     bigint,
-  details       jsonb       default '{}'::jsonb,
-  created_at    timestamptz default now()
+create index if not exists tickets_guild_idx on public.tickets (guild_id, status);
+
+-- ---------- SESSIONS DU SITE WEB ----------
+create table if not exists public.web_sessions (
+  token       text primary key,
+  user_id     bigint      not null,
+  expires_at  timestamptz not null,
+  created_at  timestamptz default now()
 );
 
-create index if not exists audit_guild_idx on public.audit_log (guild_id, created_at desc);
-
--- ---------- SETTINGS (config persistante du bot) ----------
-create table if not exists public.settings (
-  guild_id      bigint primary key,
-  recruit_channel_id bigint,
-  tickets_channel_id  bigint,
-  muted_role_id       bigint,
-  created_at    timestamptz default now()
-);
+create index if not EXISTS web_sessions_user_idx on public.web_sessions (user_id);
 
 -- ---------- ROW LEVEL SECURITY ----------
--- On active RLS et on verrouille tout: seul le bot (service_role) parle a la base.
-alter table public.ranks        enable row level security;
-alter table public.members      enable row level security;
-alter table public.sanctions    enable row level security;
-alter table public.applications enable row level security;
-alter table public.tickets      enable row level security;
-alter table public.audit_log    enable row level security;
-alter table public.settings    enable row level security;
-
--- Aucune policy = aucun acces depuis le navigateur.
--- Seul le service_role key (cote bot) passe.
+-- On verrouille tout. Seules les service_role (le bot et le site, cote
+-- serveur) passent. Aucune policy n'est ouverte.
+alter table public.guilds         enable row level security;
+alter table public.guild_admins   enable row level security;
+alter table public.guild_config   enable row level security;
+alter table public.tickets       enable row level security;
+alter table public.web_sessions  enable row level security;
